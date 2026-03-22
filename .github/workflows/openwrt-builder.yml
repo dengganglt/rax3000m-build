@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 env:
-  # 解决 2026 年 Node 24 兼容性警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-25.12
@@ -45,9 +44,6 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
-        # 调试：列出文件位置，防止路径丢失
-        echo "当前工作目录: $PWD"
-        ls -F
 
     - name: Clone Source Code
       working-directory: /workdir
@@ -57,7 +53,6 @@ jobs:
 
     - name: Load Custom Feeds
       run: |
-        # 修正：直接用 bash 调用，避开权限和路径映射问题
         [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ] && bash "$GITHUB_WORKSPACE/$DIY_P1_SH"
         cd openwrt
         ./scripts/feeds update -a
@@ -66,8 +61,10 @@ jobs:
     - name: Load Custom Configuration
       run: |
         [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" openwrt/.config
-        # 修正：使用绝对路径确保能找到脚本
-        [ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ] && bash "$GITHUB_WORKSPACE/$DIY_P2_SH"
+        chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
+        cd openwrt
+        # 这里已经在 openwrt 目录了，diy-part2.sh 里的 sed 就能生效了
+        bash "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
     - name: Compile the Firmware
       id: compile
@@ -85,10 +82,11 @@ jobs:
       id: organize
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
-        # 精准锁定 RAX3000M 固件生成目录，不要用通配符
         cd openwrt/bin/targets/mediatek/filogic/
         rm -rf packages .config* *.json *.buildinfo *.manifest *.sha256sums
-        # 将路径记录在输出变量中
+        # [核心修复] 在这里顺手把发布说明文件建好，防止发布步骤报错找不到文件
+        echo "RAX3000M 硬改 1GB 内存专用固件 (ImmortalWrt 25.12)" > $GITHUB_WORKSPACE/release.txt
+        echo "编译日期: $(date +'%Y-%m-%d %H:%M')" >> $GITHUB_WORKSPACE/release.txt
         echo "FIRMWARE_FINAL_PATH=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -97,8 +95,15 @@ jobs:
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         tag_name: RAX3000M-1GB-${{ env.FILE_DATE }}
-        body_path: release.txt
-        # [核心修正] 绝对禁止使用 /*，只上传固件目录内容
+        # 路径现在已经通过 $GITHUB_WORKSPACE 绝对化了
+        body_path: ${{ github.workspace }}/release.txt
+        # 路径已经被 $PWD 焊死了，绝不碰根目录
         files: ${{ env.FIRMWARE_FINAL_PATH }}/*
         token: ${{ secrets.GITHUB_TOKEN }}
         make_latest: true
+
+    - name: Delete Old Workflow Runs
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        retain_days: 1
+        keep_minimum_runs: 3
