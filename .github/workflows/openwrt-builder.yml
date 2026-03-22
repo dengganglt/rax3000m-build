@@ -8,13 +8,9 @@ on:
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-25.12
-  FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -22,7 +18,6 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
-      actions: write
 
     steps:
     - name: Checkout
@@ -52,26 +47,21 @@ jobs:
     - name: Clone Source Code
       working-directory: /workdir
       run: |
-        df -hT $PWD
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     - name: Load Custom Feeds
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        # 修正：使用绝对路径赋予脚本权限
+        # 强制使用物理路径，解决 chmod 找不到文件的问题
         chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH
-        cd openwrt
-        # 修正：执行脚本时明确指定工作目录
         $GITHUB_WORKSPACE/$DIY_P1_SH
+        cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
     - name: Load Custom Configuration
       run: |
-        [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        # 修正：使用绝对路径赋予脚本权限
         chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
@@ -86,7 +76,6 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
         echo "::endgroup::"
-        echo "编译线程数: $(nproc)"
         make -j$(nproc) || make -j1 V=s || { echo "Compile failed"; exit 1; }
         echo "status=success" >> $GITHUB_OUTPUT
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
@@ -95,43 +84,23 @@ jobs:
       id: organize
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
-        # 修正：精准进入 RAX3000M 生成目录
+        # 精准锁定 RAX3000M 生成目录
         cd openwrt/bin/targets/mediatek/filogic/
         rm -rf packages .config* *.json *.buildinfo *.manifest *.sha256sums
-        # 将当前 PWD（绝对路径）存入环境变量包
-        echo "FIRMWARE_OUT=$PWD" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload Firmware to Artifact
-      uses: actions/upload-artifact@v4
-      if: steps.organize.outputs.status == 'success' && !cancelled()
-      with:
-        name: OpenWrt_RAX3000M_1GB${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE_OUT }}/*
-
-    - name: Generate Release Tag
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      run: |
-        echo "release_tag=RAX3000M-1GB-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        touch release.txt
-        echo "RAX3000M 硬改 1GB 内存专用固件" >> release.txt
-        echo "基于 ImmortalWrt 25.12 (APK 模式)" >> release.txt
+        # 将路径记录在 output 变量中，防止环境丢失
+        echo "FIRMWARE_DIR=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload Firmware to Release
       uses: softprops/action-gh-release@v2
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+      if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        tag_name: ${{ steps.tag.outputs.release_tag }}
-        body_path: release.txt
-        # 核心修正：绝对不要写 /*，使用上面 Organize 步骤存下的变量
-        files: ${{ env.FIRMWARE_OUT }}/*
+        tag_name: RAX3000M-1GB-${{ env.FILE_DATE }}
+        # [核心修正] 彻底删掉 /*，只抓取固件目录的内容
+        files: ${{ env.FIRMWARE_DIR }}/*
         token: ${{ secrets.GITHUB_TOKEN }}
+        body: |
+          RAX3000M 硬改 1GB 内存专用固件
+          源码分支: ImmortalWrt 25.12
+          内置: Docker, 1Panel 运行环境, PassWall 等
         make_latest: true
-
-    - name: Delete Old Workflow Runs
-      uses: Mattraks/delete-workflow-runs@v2
-      with:
-        retain_days: 1
-        keep_minimum_runs: 3
