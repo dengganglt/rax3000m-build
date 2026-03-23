@@ -69,10 +69,18 @@ jobs:
 
     - name: Load Custom Configuration
       run: |
+        # 1. 强力拷贝配置文件
         [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" openwrt/.config
-        # [核心修复 3] 先进入目录，再运行脚本，确保脚本内的 sed 能找到 package 文件夹
+        
+        # 2. 进入目录并执行脚本 (增加 -x 参数进入调试模式)
         cd openwrt
-        [ -f "../$DIY_P2_SH" ] && bash "../$DIY_P2_SH"
+        if [ -f "../$DIY_P2_SH" ]; then
+            echo "正在执行 $DIY_P2_SH ..."
+            bash -x "../$DIY_P2_SH"
+        else
+            echo "错误：依然找不到 $DIY_P2_SH"
+            exit 1
+        fi
 
     - name: Compile the Firmware
       id: compile
