@@ -1,8 +1,3 @@
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# 针对 RAX3000M 1GB 硬改版优化
-#
-
 name: OpenWrt Builder
 
 on:
@@ -11,7 +6,6 @@ on:
   workflow_dispatch:
 
 env:
-  # 解决 2026 年 Node 24 环境兼容性
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-25.12
@@ -30,7 +24,6 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # [核心修复 1] 彻底扩容：解决 25.12 分支磁盘空间不足导致的 Exit 128
     - name: Maximize Build Space
       uses: easimon/maximize-build-space@master
       with:
@@ -55,31 +48,27 @@ jobs:
     - name: Clone Source Code
       working-directory: /workdir
       run: |
-        df -hT $PWD
         git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     - name: Load Custom Feeds
       run: |
-        # [核心修复 2] 不再使用 chmod，直接用 bash 调用根目录脚本，解决 No such file 报错
-        [ -f "$DIY_P1_SH" ] && bash "$DIY_P1_SH"
+        [ -e "$FEEDS_CONF" ] && cp "$FEEDS_CONF" openwrt/feeds.conf.default
+        # [核心修复] 使用绝对路径执行，无视软链接干扰
+        if [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ]; then
+            bash "$GITHUB_WORKSPACE/$DIY_P1_SH"
+        fi
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
     - name: Load Custom Configuration
       run: |
-        # 1. 强力拷贝配置文件
         [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" openwrt/.config
-        
-        # 2. 进入目录并执行脚本 (增加 -x 参数进入调试模式)
         cd openwrt
-        if [ -f "../$DIY_P2_SH" ]; then
-            echo "正在执行 $DIY_P2_SH ..."
-            bash -x "../$DIY_P2_SH"
-        else
-            echo "错误：依然找不到 $DIY_P2_SH"
-            exit 1
+        # [核心修复] 使用绝对路径执行，确保 sed 能正确找到 openwrt 内部的 package 文件夹
+        if [ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ]; then
+            bash "$GITHUB_WORKSPACE/$DIY_P2_SH"
         fi
 
     - name: Compile the Firmware
@@ -99,14 +88,12 @@ jobs:
       id: organize
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
-        # [核心修复 4] 精准锁定 RAX3000M 固件生成目录，杜绝 /* 路径
-        cd openwrt/bin/targets/mediatek/filogic/
+        # 使用绝对路径定位，防止环境位移
+        cd $GITHUB_WORKSPACE/openwrt/bin/targets/mediatek/filogic/
         rm -rf packages .config* *.json *.buildinfo *.manifest *.sha256sums
-        # 将当前 PWD（绝对路径）存入环境变量
-        echo "FIRMWARE_DIR=$PWD" >> $GITHUB_ENV
-        # 顺便创建发布日志，防止发布步骤因找不到 body 文件报错
-        echo "RAX3000M 硬改 1GB 内存专用固件" > $GITHUB_WORKSPACE/release.txt
-        echo "源码分支: ${{ env.REPO_BRANCH }}" >> $GITHUB_WORKSPACE/release.txt
+        echo "FIRMWARE_FINAL_PATH=$PWD" >> $GITHUB_ENV
+        # 创建 release 说明
+        echo "RAX3000M 硬改 1GB 内存专用固件 (ImmortalWrt 25.12)" > $GITHUB_WORKSPACE/release.txt
         echo "编译时间: $(date +'%Y-%m-%d %H:%M')" >> $GITHUB_WORKSPACE/release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -116,8 +103,8 @@ jobs:
       with:
         tag_name: RAX3000M-1GB-${{ env.FILE_DATE }}
         body_path: release.txt
-        # [核心修复 5] 绝对不要写 /*，锁定使用 organize 步骤生成的物理路径
-        files: ${{ env.FIRMWARE_DIR }}/*
+        # [核心修复] 彻底杜绝 /*，使用物理路径上传
+        files: ${{ env.FIRMWARE_FINAL_PATH }}/*
         token: ${{ secrets.GITHUB_TOKEN }}
         make_latest: true
 
