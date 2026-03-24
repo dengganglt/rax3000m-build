@@ -24,23 +24,26 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Maximize Build Space
-      uses: easimon/maximize-build-space@master
-      with:
-        root-reserve-mb: 2048
-        temp-reserve-mb: 1024
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
+    # [核心修复] 手动强力清理磁盘空间，比插件更彻底
+    - name: Cleanup Disk Space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq purge azure-cli* docker* ghc* google* dotnet* firefox* mysql* php* powershell* snapd* terraform*
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        df -h
 
     - name: Initialization Environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        # 精简后的依赖包列表，去掉了过时的 python2.7 等大户
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
@@ -53,11 +56,7 @@ jobs:
 
     - name: Load Custom Feeds
       run: |
-        [ -e "$FEEDS_CONF" ] && cp "$FEEDS_CONF" openwrt/feeds.conf.default
-        # [核心修复] 使用绝对路径执行，无视软链接干扰
-        if [ -f "$GITHUB_WORKSPACE/$DIY_P1_SH" ]; then
-            bash "$GITHUB_WORKSPACE/$DIY_P1_SH"
-        fi
+        [ -f "$DIY_P1_SH" ] && bash "$DIY_P1_SH"
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
@@ -66,10 +65,7 @@ jobs:
       run: |
         [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" openwrt/.config
         cd openwrt
-        # [核心修复] 使用绝对路径执行，确保 sed 能正确找到 openwrt 内部的 package 文件夹
-        if [ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ]; then
-            bash "$GITHUB_WORKSPACE/$DIY_P2_SH"
-        fi
+        [ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ] && bash "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
     - name: Compile the Firmware
       id: compile
@@ -79,7 +75,8 @@ jobs:
         echo "::group::Download packages"
         make download -j8
         echo "::endgroup::"
-        echo "编译线程数: $(nproc)"
+        # 增加空间监控：每隔 10 分钟显示一次剩余空间，防止盲目等待
+        (while true; do df -h /; sleep 600; done) &
         make -j$(nproc) || make -j1 V=s || { echo "Compile failed"; exit 1; }
         echo "status=success" >> $GITHUB_OUTPUT
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
@@ -88,13 +85,10 @@ jobs:
       id: organize
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
-        # 使用绝对路径定位，防止环境位移
-        cd $GITHUB_WORKSPACE/openwrt/bin/targets/mediatek/filogic/
+        cd openwrt/bin/targets/mediatek/filogic/
         rm -rf packages .config* *.json *.buildinfo *.manifest *.sha256sums
         echo "FIRMWARE_FINAL_PATH=$PWD" >> $GITHUB_ENV
-        # 创建 release 说明
         echo "RAX3000M 硬改 1GB 内存专用固件 (ImmortalWrt 25.12)" > $GITHUB_WORKSPACE/release.txt
-        echo "编译时间: $(date +'%Y-%m-%d %H:%M')" >> $GITHUB_WORKSPACE/release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload Firmware to Release
@@ -103,13 +97,6 @@ jobs:
       with:
         tag_name: RAX3000M-1GB-${{ env.FILE_DATE }}
         body_path: release.txt
-        # [核心修复] 彻底杜绝 /*，使用物理路径上传
         files: ${{ env.FIRMWARE_FINAL_PATH }}/*
         token: ${{ secrets.GITHUB_TOKEN }}
         make_latest: true
-
-    - name: Delete Old Workflow Runs
-      uses: Mattraks/delete-workflow-runs@v2
-      with:
-        retain_days: 1
-        keep_minimum_runs: 3
