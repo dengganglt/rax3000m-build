@@ -1,9 +1,10 @@
 #!/bin/bash
-# File name: diy-part1.sh
-# Description: OpenWrt DIY script part 1 (Before Update feeds)
 
-# 即使精简，也建议保留清理逻辑，防止云端缓存干扰
-sed -i '/helloworld/d' feeds.conf.default
-sed -i '/passwall/d' feeds.conf.default
+# 1. 清理重复项（加上 openwrt/ 路径）
+sed -i '/helloworld/d' openwrt/feeds.conf.default
+sed -i '/passwall/d' openwrt/feeds.conf.default
 
-# 如果你想加点别的（比如非常规的主题或特殊插件），可以在这里添加，否则，留空即可
+# 2. 添加插件源（加上 openwrt/ 路径）
+echo 'src-git helloworld https://github.com/fw876/helloworld.git' >> openwrt/feeds.conf.default
+echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall.git' >> openwrt/feeds.conf.default
+echo 'src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git' >> openwrt/feeds.conf.default
