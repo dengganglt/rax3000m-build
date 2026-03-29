@@ -1,17 +1,18 @@
 #!/bin/bash
 
-# 1. 智能识别路径
-[ -f feeds.conf.default ] && CONF_FILE="feeds.conf.default"
-[ -f openwrt/feeds.conf.default ] && CONF_FILE="openwrt/feeds.conf.default"
+# 1. 强制进入 openwrt 目录（如果是从根目录运行）
+[ -d openwrt ] && cd openwrt
 
-# 2. 清理旧的重复项（确保文件是干净的）
-sed -i '/helloworld/d' $CONF_FILE
-sed -i '/passwall/d' $CONF_FILE
+# 2. 彻底清空现有的 helloworld 和 passwall 相关行
+# 我们使用非常激进的匹配模式，确保彻底删干净旧的定义
+sed -i '/helloworld/d' feeds.conf.default
+sed -i '/passwall/d' feeds.conf.default
 
 # 3. 添加新的插件源
-# 使用最标准的 src-git 格式，不加分号，让系统自动抓取默认分支
-echo 'src-git helloworld https://github.com/fw876/helloworld' >> $CONF_FILE
+# 注意：去掉所有分号和分支后缀，使用最标准的 src-git 格式
+echo 'src-git helloworld https://github.com/fw876/helloworld.git' >> feeds.conf.default
+echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall.git' >> feeds.conf.default
+echo 'src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git' >> feeds.conf.default
 
-# 换回官方 PassWall 源，它对 ImmortalWrt 25.12 的兼容性最稳
-echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall' >> $CONF_FILE
-echo 'src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages' >> $CONF_FILE
+# 4. (可选) 如果你还想要 sbwml 的优化版，请给它起一个不同的名字（例如 passwall_optim）
+# 但建议第一次先用上面的 xiaorouji 官方源跑通。
