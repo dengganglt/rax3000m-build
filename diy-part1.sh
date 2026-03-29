@@ -14,4 +14,4 @@ echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall;main' >> $C
 echo 'src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages;main' >> $CONF_FILE
 
 # 4. (可选) 如果官方源依然抽风，备用方案是换成同步率极高的镜像源
-# echo 'src-git passwall https://github.com/sbwml/openwrt-passwall;main' >> $CONF_FILE
+echo 'src-git passwall https://github.com/sbwml/openwrt-passwall;main' >> $CONF_FILE
